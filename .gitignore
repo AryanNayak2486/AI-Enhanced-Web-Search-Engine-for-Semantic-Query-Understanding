@@ -1,0 +1,5 @@
+node_modules/
+data/
+embeddings.json
+index.json
+package-lock.json
