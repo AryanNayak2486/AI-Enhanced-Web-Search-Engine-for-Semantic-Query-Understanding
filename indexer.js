@@ -1,8 +1,4 @@
-const fs = require("fs");
-const path = require("path");
-
-const DATA_DIR = path.join(__dirname, "data");
-const INDEX_FILE = path.join(__dirname, "index.json");
+const db = require("./db");
 
 const STOPWORDS = new Set([
   "a",
@@ -81,6 +77,20 @@ const STOPWORDS = new Set([
   "s",
   "t",
   "re",
+  "would",
+  "could",
+  "should",
+  "said",
+  "just",
+  "like",
+  "get",
+  "one",
+  "two",
+  "new",
+  "may",
+  "use",
+  "used",
+  "using",
 ]);
 
 function tokenize(text) {
@@ -88,94 +98,31 @@ function tokenize(text) {
     .toLowerCase()
     .replace(/[^a-z0-9\s]/g, " ")
     .split(/\s+/)
-    .filter((word) => word.length > 2 && !STOPWORDS.has(word));
+    .filter((w) => w.length > 2 && !STOPWORDS.has(w));
 }
 
 function computeTF(tokens) {
+  const counts = {};
+  for (const t of tokens) counts[t] = (counts[t] || 0) + 1;
+  const total = tokens.length || 1;
   const tf = {};
-  for (const token of tokens) {
-    tf[token] = (tf[token] || 0) + 1;
-  }
-  for (const token in tf) {
-    tf[token] = tf[token] / tokens.length;
-  }
+  for (const [t, c] of Object.entries(counts)) tf[t] = c / total;
   return tf;
 }
 
-function buildIndex() {
-  const files = fs.readdirSync(DATA_DIR).filter((f) => f.endsWith(".json"));
-  console.log(`\nIndexing ${files.length} documents...\n`);
+const deleteTerms = db.prepare("DELETE FROM terms WHERE doc_id = ?");
+const insertTerm = db.prepare(
+  "INSERT OR REPLACE INTO terms (term, doc_id, tf) VALUES (?, ?, ?)",
+);
+const indexMany = db.transaction((docId, entries) => {
+  deleteTerms.run(docId);
+  for (const [term, tf] of entries) insertTerm.run(term, docId, tf);
+});
 
-  const documents = [];
-  const dfMap = new Map(); // FIX: use Map to avoid prototype collisions
-
-  for (const file of files) {
-    const raw = JSON.parse(fs.readFileSync(path.join(DATA_DIR, file), "utf-8"));
-
-    if (!raw.text || raw.text.length < 100) {
-      console.log(`[Skipped] ${raw.title || file} — too short`);
-      continue;
-    }
-
-    const tokens = tokenize(raw.text);
-    const tf = computeTF(tokens);
-
-    documents.push({
-      id: documents.length,
-      url: raw.url,
-      title: raw.title,
-      snippet: raw.text.slice(0, 200),
-      tf,
-    });
-
-    for (const term of Object.keys(tf)) {
-      dfMap.set(term, (dfMap.get(term) || 0) + 1);
-    }
-
-    console.log(`[Indexed] "${raw.title}" — ${tokens.length} tokens`);
-  }
-
-  const N = documents.length;
-  const invertedIndex = new Map(); // FIX: use Map here too
-
-  for (const doc of documents) {
-    for (const [term, tf] of Object.entries(doc.tf)) {
-      const idf = Math.log(N / (dfMap.get(term) || 1));
-      const tfidf = tf * idf;
-
-      if (!invertedIndex.has(term)) invertedIndex.set(term, []);
-      invertedIndex.get(term).push({ docId: doc.id, tfidf });
-    }
-  }
-
-  // Sort each postings list by score
-  for (const [, postings] of invertedIndex) {
-    postings.sort((a, b) => b.tfidf - a.tfidf);
-  }
-
-  // Convert Map to plain object for JSON serialization
-  const invertedIndexObj = {};
-  for (const [term, postings] of invertedIndex) {
-    invertedIndexObj[term] = postings;
-  }
-
-  const index = {
-    documents: documents.map((d) => ({
-      id: d.id,
-      url: d.url,
-      title: d.title,
-      snippet: d.snippet,
-    })),
-    invertedIndex: invertedIndexObj,
-    totalDocs: N,
-    builtAt: new Date().toISOString(),
-  };
-
-  fs.writeFileSync(INDEX_FILE, JSON.stringify(index, null, 2));
-  console.log(
-    `\n✅ Done! Indexed ${N} docs, ${invertedIndex.size} unique terms`,
-  );
-  console.log(`Index saved to index.json`);
+function indexPage(docId, text) {
+  const tokens = tokenize(text);
+  const tf = computeTF(tokens);
+  indexMany(docId, Object.entries(tf));
 }
 
-buildIndex();
+module.exports = { indexPage, tokenize };
