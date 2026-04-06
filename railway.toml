@@ -2,10 +2,5 @@
 builder = "nixpacks"
 buildCommand = "npm install && cd client && npm install && npm run build"
 
-[[services]]
-name = "server"
+[deploy]
 startCommand = "node server.js"
-
-[[services]]
-name = "crawler"
-startCommand = "node crawler.js"
