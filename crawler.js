@@ -20,7 +20,11 @@ const HEADERS = {
 async function enqueue(url, priority = 0.4) {
   try {
     if (!url.startsWith("http")) return;
-    if (/\.(jpg|jpeg|png|gif|webp|svg|mp4|pdf|zip|exe)(\?|$)/i.test(url))
+    if (
+      /\.(jpg|jpeg|png|gif|webp|svg|mp4|pdf|zip|exe|css|js|woff|woff2)(\?|$)/i.test(
+        url,
+      )
+    )
       return;
     await pool.query(
       `INSERT INTO crawl_queue (url, priority, status, next_attempt)
@@ -31,24 +35,33 @@ async function enqueue(url, priority = 0.4) {
   } catch {}
 }
 
+// ── Hacker News ──────────────────────────────────────────────────────
 async function seedHackerNews() {
+  let added = 0;
   try {
-    const { data: ids } = await axios.get(
-      "https://hacker-news.firebaseio.com/v0/topstories.json",
-      { timeout: 8000 },
-    );
-    let added = 0;
-    for (const id of ids.slice(0, 30)) {
-      try {
-        const { data } = await axios.get(
-          `https://hacker-news.firebaseio.com/v0/item/${id}.json`,
-          { timeout: 5000 },
-        );
-        if (data?.url) {
-          await enqueue(data.url, 0.9);
-          added++;
-        }
-      } catch {}
+    for (const feed of [
+      "topstories",
+      "beststories",
+      "newstories",
+      "askstories",
+      "showstories",
+    ]) {
+      const { data: ids } = await axios.get(
+        `https://hacker-news.firebaseio.com/v0/${feed}.json`,
+        { timeout: 8000 },
+      );
+      for (const id of ids.slice(0, 20)) {
+        try {
+          const { data } = await axios.get(
+            `https://hacker-news.firebaseio.com/v0/item/${id}.json`,
+            { timeout: 5000 },
+          );
+          if (data?.url) {
+            await enqueue(data.url, 0.9);
+            added++;
+          }
+        } catch {}
+      }
     }
     console.log(`[Seed/HN] ${added} URLs queued`);
   } catch (e) {
@@ -56,19 +69,82 @@ async function seedHackerNews() {
   }
 }
 
+// ── Reddit ───────────────────────────────────────────────────────────
 async function seedReddit() {
   const subs = [
     "technology",
-    "worldnews",
-    "science",
     "programming",
+    "compsci",
     "MachineLearning",
-    "gaming",
-    "finance",
+    "artificial",
+    "webdev",
+    "learnprogramming",
+    "opensource",
+    "cybersecurity",
+    "netsec",
+    "devops",
+    "linux",
+    "python",
+    "javascript",
+    "rust",
+    "worldnews",
+    "geopolitics",
+    "news",
+    "UpliftingNews",
+    "europe",
+    "india",
+    "china",
+    "MiddleEast",
+    "environment",
+    "climate",
+    "science",
+    "Physics",
+    "biology",
+    "chemistry",
+    "space",
+    "astronomy",
+    "neuroscience",
+    "medicine",
+    "askscience",
+    "investing",
+    "stocks",
+    "CryptoCurrency",
+    "economics",
+    "personalfinance",
+    "wallstreetbets",
+    "financialindependence",
     "nba",
-    "formula1",
+    "nfl",
+    "soccer",
     "Cricket",
+    "formula1",
+    "tennis",
+    "olympics",
+    "baseball",
+    "hockey",
+    "MMA",
+    "gaming",
+    "pcgaming",
+    "PS5",
+    "XboxSeriesX",
+    "NintendoSwitch",
+    "indiegaming",
+    "gamedev",
+    "movies",
+    "television",
+    "Music",
+    "books",
+    "anime",
+    "Documentaries",
+    "LifeProTips",
+    "todayilearned",
+    "explainlikeimfive",
+    "AskReddit",
+    "Futurology",
+    "history",
+    "philosophy",
   ];
+
   let added = 0;
   for (const sub of subs) {
     try {
@@ -88,13 +164,15 @@ async function seedReddit() {
         }
       }
     } catch {}
+    await sleep(150);
   }
   console.log(`[Seed/Reddit] ${added} URLs queued`);
 }
 
+// ── Wikipedia ────────────────────────────────────────────────────────
 async function seedWikipedia() {
   let added = 0;
-  for (let i = 0; i < 15; i++) {
+  for (let i = 0; i < 20; i++) {
     try {
       const { data } = await axios.get(
         "https://en.wikipedia.org/api/rest_v1/page/random/summary",
@@ -106,9 +184,8 @@ async function seedWikipedia() {
         added++;
       }
     } catch {}
-    await sleep(200);
+    await sleep(150);
   }
-
   try {
     const d = new Date();
     d.setDate(d.getDate() - 1);
@@ -119,38 +196,120 @@ async function seedWikipedia() {
       `https://wikimedia.org/api/rest_v1/metrics/pageviews/top/en.wikipedia/all-access/${y}/${m}/${day}`,
       { timeout: 8000 },
     );
-    const skip = ["Main_Page", "Special:", "Wikipedia:", "Portal:", "File:"];
-    for (const a of (data?.items?.[0]?.articles || []).slice(0, 20)) {
+    const skip = [
+      "Main_Page",
+      "Special:",
+      "Wikipedia:",
+      "Portal:",
+      "File:",
+      "Help:",
+    ];
+    for (const a of (data?.items?.[0]?.articles || []).slice(0, 30)) {
       if (skip.some((s) => a.article.startsWith(s))) continue;
       await enqueue(`https://en.wikipedia.org/wiki/${a.article}`, 0.8);
       added++;
     }
   } catch {}
+  console.log(`[Seed/Wikipedia] ${added} URLs queued`);
+}
 
-  console.log(`[Seed/Wikipedia] ${added} articles queued`);
+// ── Direct URL seeds ─────────────────────────────────────────────────
+async function seedDirectUrls() {
+  const urls = [
+    // News
+    "https://apnews.com",
+    "https://apnews.com/hub/technology",
+    "https://apnews.com/hub/world-news",
+    "https://apnews.com/hub/science",
+    "https://apnews.com/hub/sports",
+    "https://www.bbc.com/news",
+    "https://www.bbc.com/sport",
+    "https://www.bbc.com/future",
+    "https://www.reuters.com",
+    "https://www.aljazeera.com",
+    "https://thehill.com",
+    "https://www.politico.com",
+    // Tech
+    "https://techcrunch.com",
+    "https://arstechnica.com",
+    "https://www.theverge.com",
+    "https://www.wired.com",
+    "https://www.technologyreview.com",
+    "https://venturebeat.com",
+    "https://www.zdnet.com",
+    "https://www.engadget.com",
+    "https://news.ycombinator.com",
+    "https://news.ycombinator.com/best",
+    "https://news.ycombinator.com/ask",
+    "https://news.ycombinator.com/show",
+    "https://github.com/trending",
+    "https://github.com/trending/python",
+    "https://github.com/trending/javascript",
+    "https://github.com/trending/typescript",
+    // Science
+    "https://www.sciencedaily.com",
+    "https://www.scientificamerican.com",
+    "https://phys.org",
+    "https://www.newscientist.com",
+    "https://www.space.com",
+    // Finance
+    "https://finance.yahoo.com",
+    "https://www.marketwatch.com",
+    "https://www.investopedia.com",
+    "https://www.coindesk.com",
+    // Sports
+    "https://www.espn.com",
+    "https://www.espn.com/nba",
+    "https://www.espn.com/nfl",
+    "https://www.espn.com/soccer",
+    "https://www.cricbuzz.com",
+    // Dev blogs
+    "https://dev.to",
+    "https://blog.cloudflare.com",
+    "https://engineering.fb.com",
+    "https://netflixtechblog.com",
+    "https://aws.amazon.com/blogs/aws",
+    // Wikipedia portals
+    "https://en.wikipedia.org/wiki/Portal:Current_events",
+    "https://en.wikipedia.org/wiki/Portal:Technology",
+    "https://en.wikipedia.org/wiki/Portal:Science",
+    "https://en.wikipedia.org/wiki/Portal:Sports",
+  ];
+  let added = 0;
+  for (const url of urls) {
+    await enqueue(url, 0.8);
+    added++;
+  }
+  console.log(`[Seed/Direct] ${added} URLs queued`);
 }
 
 async function runSeeding() {
-  console.log("\n🌱 Seeding...");
-  await Promise.allSettled([seedHackerNews(), seedReddit(), seedWikipedia()]);
+  console.log("\n🌱 Seeding crawl queue...");
+  await Promise.allSettled([
+    seedHackerNews(),
+    seedReddit(),
+    seedWikipedia(),
+    seedDirectUrls(),
+  ]);
   console.log("✅ Seeding done\n");
 }
 
+// ── Crawl one page ───────────────────────────────────────────────────
 async function crawlOne(url) {
   await pool.query(
     `UPDATE crawl_queue SET status = 'crawling' WHERE url = $1`,
     [url],
   );
-
   try {
     const { data: html } = await axios.get(url, {
       timeout: 12000,
       headers: HEADERS,
       maxRedirects: 5,
     });
-
     const $ = cheerio.load(html);
-    $("script,style,nav,footer,header,noscript,aside,.ad,.sidebar").remove();
+    $(
+      "script,style,nav,footer,header,noscript,aside,.ad,.sidebar,.cookie-banner",
+    ).remove();
 
     const title = $("title").text().trim() || "Untitled";
     const fullText = $("body").text().replace(/\s+/g, " ").trim();
@@ -165,9 +324,6 @@ async function crawlOne(url) {
       domain = new URL(url).hostname;
     } catch {}
 
-    const snippet = fullText.slice(0, 300);
-    const wordCount = fullText.split(" ").length;
-
     const { rows } = await pool.query(
       `INSERT INTO pages (url, domain, title, snippet, full_text, word_count, crawled_at, next_crawl)
        VALUES ($1,$2,$3,$4,$5,$6,NOW(),NOW() + INTERVAL '24 hours')
@@ -176,12 +332,17 @@ async function crawlOne(url) {
          full_text=EXCLUDED.full_text, word_count=EXCLUDED.word_count,
          crawled_at=NOW(), next_crawl=NOW() + INTERVAL '24 hours'
        RETURNING id`,
-      [url, domain, title, snippet, fullText, wordCount],
+      [
+        url,
+        domain,
+        title,
+        fullText.slice(0, 300),
+        fullText,
+        fullText.split(" ").length,
+      ],
     );
 
     const pageId = rows[0].id;
-
-    // Extract and save links
     const links = [];
     $("a[href]").each((_, el) => {
       const href = $(el).attr("href");
@@ -200,7 +361,6 @@ async function crawlOne(url) {
 
     for (const link of links.slice(0, MAX_LINKS_QUEUE))
       await enqueue(link, 0.4);
-
     await indexPage(pageId, fullText);
 
     await pool.query(
@@ -223,10 +383,9 @@ async function crawlOne(url) {
       [url],
     );
     const attempts = (rows[0]?.attempts || 0) + 1;
-    const backoff = Math.min(attempts * 10, 120);
     await pool.query(
       `UPDATE crawl_queue SET status='pending', attempts=$1, next_attempt=NOW() + ($2 || ' minutes')::INTERVAL WHERE url=$3`,
-      [attempts, backoff, url],
+      [attempts, Math.min(attempts * 10, 120), url],
     );
     console.error(`[✗] ${url.slice(0, 80)} — ${err.message}`);
   }
@@ -236,20 +395,15 @@ async function crawlLoop() {
   while (true) {
     const { rows } = await pool.query(`
       SELECT url FROM crawl_queue
-      WHERE status = 'pending'
-        AND next_attempt <= NOW()
-        AND attempts < 5
-      ORDER BY priority DESC
-      LIMIT 1
+      WHERE status = 'pending' AND next_attempt <= NOW() AND attempts < 5
+      ORDER BY priority DESC LIMIT 1
     `);
-
     if (rows.length) {
       await crawlOne(rows[0].url);
     } else {
       console.log("\n[Queue empty] Re-seeding...");
       await runSeeding();
     }
-
     await sleep(CRAWL_DELAY_MS);
   }
 }
