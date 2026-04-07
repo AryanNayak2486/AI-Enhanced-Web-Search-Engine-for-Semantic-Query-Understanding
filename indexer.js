@@ -1,4 +1,4 @@
-const db = require("./db");
+const { pool } = require("./db");
 
 const STOPWORDS = new Set([
   "a",
@@ -110,19 +110,28 @@ function computeTF(tokens) {
   return tf;
 }
 
-const deleteTerms = db.prepare("DELETE FROM terms WHERE doc_id = ?");
-const insertTerm = db.prepare(
-  "INSERT OR REPLACE INTO terms (term, doc_id, tf) VALUES (?, ?, ?)",
-);
-const indexMany = db.transaction((docId, entries) => {
-  deleteTerms.run(docId);
-  for (const [term, tf] of entries) insertTerm.run(term, docId, tf);
-});
-
-function indexPage(docId, text) {
+async function indexPage(docId, text) {
   const tokens = tokenize(text);
   const tf = computeTF(tokens);
-  indexMany(docId, Object.entries(tf));
+
+  await pool.query("DELETE FROM terms WHERE doc_id = $1", [docId]);
+
+  const entries = Object.entries(tf);
+  if (!entries.length) return;
+
+  // Batch insert
+  const values = [];
+  const params = [];
+  let i = 1;
+  for (const [term, score] of entries) {
+    values.push(`($${i++}, $${i++}, $${i++})`);
+    params.push(term, docId, score);
+  }
+
+  await pool.query(
+    `INSERT INTO terms (term, doc_id, tf) VALUES ${values.join(",")} ON CONFLICT DO NOTHING`,
+    params,
+  );
 }
 
 module.exports = { indexPage, tokenize };

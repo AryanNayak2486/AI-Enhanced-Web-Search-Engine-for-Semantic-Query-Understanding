@@ -1,22 +1,16 @@
-const db = require("./db");
+const { pool } = require("./db");
 
-function runPageRank(iterations = 25, damping = 0.85) {
-  const pages = db.prepare("SELECT id FROM pages").all();
+async function runPageRank(iterations = 20, damping = 0.85) {
+  const { rows: pages } = await pool.query("SELECT id FROM pages");
   const N = pages.length;
   if (N === 0) return;
 
-  // Resolve links to (source_id → target_id) for pages we've indexed
-  const links = db
-    .prepare(
-      `
+  const { rows: links } = await pool.query(`
     SELECT l.source_id, p.id AS target_id
     FROM links l
     JOIN pages p ON p.url = l.target_url
-  `,
-    )
-    .all();
+  `);
 
-  // Build outbound + inbound maps
   const outbound = {};
   const inbound = {};
   for (const { id } of pages) {
@@ -25,39 +19,37 @@ function runPageRank(iterations = 25, damping = 0.85) {
   }
 
   for (const { source_id, target_id } of links) {
-    if (outbound[source_id] !== undefined) outbound[source_id].push(target_id);
-    if (inbound[target_id] !== undefined) inbound[target_id].push(source_id);
+    if (outbound[source_id]) outbound[source_id].push(target_id);
+    if (inbound[target_id]) inbound[target_id].push(source_id);
   }
 
-  // Initialize PR uniformly
   let pr = {};
   for (const { id } of pages) pr[id] = 1.0 / N;
 
-  // Iterate
-  for (let i = 0; i < iterations; i++) {
+  for (let iter = 0; iter < iterations; iter++) {
     const next = {};
     for (const { id } of pages) {
       const base = (1 - damping) / N;
       const incoming = inbound[id].reduce((sum, src) => {
-        const outCount = outbound[src].length || 1;
-        return sum + pr[src] / outCount;
+        return sum + pr[src] / (outbound[src].length || 1);
       }, 0);
       next[id] = base + damping * incoming;
     }
     pr = next;
   }
 
-  // Normalize to 0–10 scale
   const maxPR = Math.max(...Object.values(pr)) || 1;
-  const update = db.prepare("UPDATE pages SET pagerank = ? WHERE id = ?");
-  const updateAll = db.transaction(() => {
-    for (const [id, score] of Object.entries(pr)) {
-      update.run((score / maxPR) * 10, parseInt(id));
-    }
-  });
-  updateAll();
 
-  console.log(`[PageRank] ✅ Updated ${N} pages (${iterations} iterations)`);
+  // Batch update
+  const cases = Object.entries(pr)
+    .map(([id, score]) => `WHEN id = ${id} THEN ${(score / maxPR) * 10}`)
+    .join(" ");
+  const ids = Object.keys(pr).join(",");
+
+  await pool.query(
+    `UPDATE pages SET pagerank = CASE ${cases} END WHERE id IN (${ids})`,
+  );
+  console.log(`[PageRank] ✅ Updated ${N} pages`);
 }
 
 module.exports = { runPageRank };
